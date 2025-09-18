@@ -11,3 +11,6 @@ Với ý tưởng là winform sẽ nhận ảnh chụp từ ESP32 CAM sau đó c
 Bên dưới là hình ảnh giao diện winform chuyển đổi ảnh 64x64 thành mã hex và gửi xuống cho FPGA, sau khi nhận thì FPGA gửi lại toàn bộ dữ liệu đã nhận lên lại winform qua
 UART:
 <img width="1134" height="760" alt="image" src="https://github.com/user-attachments/assets/2e79c3c6-3b8c-49ec-be9c-af2a9fc6f38c" />
+
+Kit sử dụng:
+<img width="1152" height="2048" alt="image" src="https://github.com/user-attachments/assets/398aa64f-f3b1-4b10-ab76-a35e65d197f1" />
