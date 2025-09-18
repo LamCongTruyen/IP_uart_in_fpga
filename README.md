@@ -13,4 +13,4 @@ UART:
 <img width="1134" height="760" alt="image" src="https://github.com/user-attachments/assets/2e79c3c6-3b8c-49ec-be9c-af2a9fc6f38c" />
 
 Kit sử dụng:
-<img width="760" height="1134" alt="image" src="https://github.com/user-attachments/assets/398aa64f-f3b1-4b10-ab76-a35e65d197f1" alt="Mô tả ảnh" style="transform: scaleX(-1);"/>
+<img width="760" height="1134" alt="image" src="https://github.com/user-attachments/assets/398aa64f-f3b1-4b10-ab76-a35e65d197f1" style="transform: scaleX(-1);"/>
