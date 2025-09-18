@@ -1,0 +1,82 @@
+module uart_tx(
+    input clk,              // xung 50MHz
+    input rst_n,            // reset active-low
+    input trigger,          // kích hoạt truyền 1 byte
+    input [7:0] data_in,    // dữ liệu vào 8-bit
+    output reg tx,          // chân truyền UART TX
+    output reg busy         // trạng thái bận (đang truyền)
+);
+
+    parameter BAUD_DIV = 5208;   // BAUD_DIV = Fclk / Baud. Ví dụ 50 MHz / 9600 ≈ 5208.
+    
+    // Định nghĩa trạng thái
+    localparam STATE_IDLE  = 2'd0,
+               STATE_START = 2'd1,
+               STATE_DATA  = 2'd2,
+               STATE_STOP  = 2'd3;
+               
+    reg [1:0] state;
+    reg [12:0] baud_counter; // đếm chu kỳ (cần đủ bít để đếm đến BAUD_DIV)
+    reg [3:0] bit_index;     // đếm số bit dữ liệu đã truyền (0 đến 7)
+    reg [7:0] tx_shift;      // thanh dịch chứa dữ liệu sẽ truyền
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state       <= STATE_IDLE;
+            tx          <= 1'b1;  // ở trạng thái IDLE chân tx ở mức cao
+            baud_counter<= 0;
+            bit_index   <= 0;
+            busy        <= 0;
+        end else begin
+            case(state)
+                STATE_IDLE: begin
+                    tx          <= 1'b1;
+                    baud_counter<= 0;
+                    bit_index   <= 0;
+                    busy        <= 0;
+                    if (trigger) begin
+                        busy     <= 1;
+                        tx_shift <= data_in;  // load dữ liệu vào thanh dịch
+                        state    <= STATE_START;
+                    end
+                end
+                STATE_START: begin
+                    tx <= 1'b0; // bit start là 0
+                    if (baud_counter < BAUD_DIV-1)
+                        baud_counter <= baud_counter + 1;
+                    else begin
+                        baud_counter <= 0;
+                        state <= STATE_DATA;
+                    end
+                end
+                STATE_DATA: begin
+                    tx <= tx_shift[0]; // truyền LSB trước
+                    if (baud_counter < BAUD_DIV-1)
+                        baud_counter <= baud_counter + 1;
+                    else begin
+                        baud_counter <= 0;
+                        // dịch phải dữ liệu
+                        tx_shift <= {1'b0, tx_shift[7:1]};
+                        if (bit_index < 7)
+                            bit_index <= bit_index + 1;
+                        else begin
+                            bit_index <= 0;
+                            state <= STATE_STOP;
+                        end
+                    end
+                end
+                STATE_STOP: begin
+                    tx <= 1'b1; // bit stop là 1
+                    if (baud_counter < BAUD_DIV-1)
+                        baud_counter <= baud_counter + 1;
+                    else begin
+                        baud_counter <= 0;
+                        state <= STATE_IDLE;
+                    end
+                end
+                default: state <= STATE_IDLE;
+            endcase
+        end
+    end
+
+endmodule

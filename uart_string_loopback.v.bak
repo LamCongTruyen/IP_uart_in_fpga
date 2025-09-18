@@ -1,0 +1,109 @@
+module uart_string_loopback(
+    input clk,
+    input rst_n,
+    input rx,    // UART RX input
+    output tx    // UART TX output
+);
+
+    // --- Module uart_rx ---
+    wire [7:0] rx_data;
+    wire rx_valid;
+    
+    uart_rx uart_rx_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rx(rx),
+        .data_out(rx_data),
+        .valid(rx_valid)
+    );
+    
+    // --- Module uart_tx ---
+    reg trigger;
+    reg [7:0] tx_data;
+    wire tx_busy;
+    
+    uart_tx uart_tx_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .trigger(trigger),
+        .data_in(tx_data),
+        .tx(tx),
+        .busy(tx_busy)
+    );
+    
+    // --- FSM để nhận chuỗi và gửi lại ---
+    // Các trạng thái:
+    // COLLECT: Nhận ký tự từ rx và lưu vào bộ nhớ cho đến khi nhận ký tự xuống dòng "\n"
+    // SEND: Gửi ký tự từ bộ nhớ qua tx khi uart_tx không bận
+    // WAIT_TX: Chờ cho tx hoàn thành truyền ký tự vừa kích hoạt trigger
+    localparam STATE_COLLECT = 2'd0,
+               STATE_SEND    = 2'd1,
+               STATE_WAIT_TX = 2'd2;
+               
+    reg [1:0] state;
+    
+    // Bộ nhớ lưu chuỗi, với độ dài tối đa MAX_LEN
+    parameter MAX_LEN = 128;
+    reg [7:0] buffer [0:MAX_LEN-1];
+    
+    // Con trỏ lưu vị trí trong bộ nhớ (cho việc lưu khi nhận và gửi)
+    reg [7:0] rx_ptr;  // số ký tự đã nhận (đồng thời là độ dài chuỗi)
+    reg [7:0] tx_ptr;  // vị trí ký tự hiện tại để gửi
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state   <= STATE_COLLECT;
+            rx_ptr  <= 0;
+            tx_ptr  <= 0;
+            trigger <= 0;
+            tx_data <= 8'd0;
+        end else begin
+            case(state)
+                // 1. Trạng thái nhận ký tự
+                STATE_COLLECT: begin
+                    trigger <= 0;  // đảm bảo trigger không kích hoạt gửi
+                    if (rx_valid) begin
+                        buffer[rx_ptr] <= rx_data;  // lưu ký tự nhận được
+                        rx_ptr <= rx_ptr + 1;
+                        // Nếu ký tự nhận được là xuống dòng "\n" (ASCII 10)
+                        if (rx_data == "\n") begin
+                            tx_ptr <= 0;           // đặt lại con trỏ gửi
+                            state  <= STATE_SEND;  // chuyển sang trạng thái gửi chuỗi
+                        end
+                    end
+                end
+
+                // 2. Trạng thái kích hoạt gửi ký tự (nếu uart_tx không bận)
+                STATE_SEND: begin
+                    if (!tx_busy) begin
+                        tx_data <= buffer[tx_ptr];  // load ký tự từ bộ nhớ
+                        trigger <= 1;               // tạo xung kích hoạt gửi (chỉ 1 chu kỳ)
+                        state   <= STATE_WAIT_TX;
+                    end else begin
+                        trigger <= 0;
+                    end
+                end
+
+                // 3. Trạng thái chờ uart_tx hoàn thành truyền ký tự vừa kích hoạt
+                STATE_WAIT_TX: begin
+                    trigger <= 0;  // đảm bảo trigger chỉ một xung
+                    // Khi uart_tx đã hoàn thành truyền ký tự (tx_busy về 0)
+                    if (!tx_busy) begin
+                        tx_ptr <= tx_ptr + 1;
+                        // Nếu đã gửi hết các ký tự đã nhận (tx_ptr == rx_ptr - 1)
+                        if (tx_ptr + 1 >= rx_ptr) begin
+                            // Reset bộ nhớ để nhận chuỗi mới
+                            rx_ptr <= 0;
+                            state  <= STATE_COLLECT;
+                        end else begin
+                            state <= STATE_SEND;
+                        end
+                    end
+                end
+
+                default: state <= STATE_COLLECT;
+            endcase
+        end
+    end
+
+endmodule

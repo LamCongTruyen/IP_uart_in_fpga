@@ -1,0 +1,151 @@
+module UART_FPGA3 (
+    input wire clk,           // Đồng hồ hệ thống (50 MHz)
+    input wire reset,         // Reset active-low
+    input wire rx,            // Chân nhận dữ liệu
+    output reg tx,            // Chân truyền dữ liệu
+    output reg [7:0] rx_data, // Dữ liệu nhận được
+    output reg rx_done,       // Cờ báo nhận hoàn tất
+    input wire [7:0] tx_data, // Dữ liệu cần gửi (không dùng)
+    input wire tx_start       // Kích hoạt truyền (không dùng)
+);
+
+// Tham số
+parameter CLK_FREQ = 50000000; // Tần số đồng hồ 50 MHz
+parameter BAUD_RATE = 9600;    // Tốc độ baud
+parameter BAUD_COUNT = CLK_FREQ / BAUD_RATE; // ≈5208 chu kỳ/bit
+parameter DELAY_CYCLES = 1000; // Độ trễ nhỏ (~192 μs @ 50 MHz)
+
+// Biến cho TX
+reg [2:0] tx_state;       // Trạng thái truyền (FSM)
+reg [9:0] tx_shift_reg;   // Thanh ghi dịch (1 start + 8 data + 1 stop)
+reg [15:0] tx_counter;    // Đếm chu kỳ cho baud rate
+reg [3:0] tx_bit_count;   // Đếm số bit trong khung
+reg tx_busy;              // Cờ báo TX bận
+reg [15:0] delay_counter; // Đếm độ trễ giữa RX và TX
+
+// Biến cho RX
+reg [2:0] rx_state;       // Trạng thái nhận (FSM)
+reg [7:0] rx_shift_reg;   // Thanh ghi dịch cho dữ liệu nhận
+reg [15:0] rx_counter;    // Đếm chu kỳ cho baud rate
+reg [3:0] rx_bit_count;   // Đếm số bit đã nhận
+reg rx_busy;              // Cờ báo RX bận
+
+// Logic truyền (TX)
+always @(posedge clk or negedge reset) begin
+    if (!reset) begin
+        tx <= 1;              // TX ở mức cao khi idle
+        tx_state <= 0;
+        tx_counter <= 0;
+        tx_bit_count <= 0;
+        tx_busy <= 0;
+        delay_counter <= 0;
+        tx_shift_reg <= 10'b1111111111;
+    end
+    else begin
+        case (tx_state)
+            0: begin // Chờ và kiểm tra rx_done
+                tx <= 1; // Idle
+                if (!tx_busy && rx_done ) begin
+                    tx_shift_reg <= {1'b1, rx_data, 1'b0}; // Stop + rx_data + Start
+                    tx_busy <= 1;
+                    tx_state <= 1;
+                    tx_counter <= 0;
+                    tx_bit_count <= 0;
+                    delay_counter <= 0;
+                end
+                else if (rx_done) begin
+                    delay_counter <= delay_counter + 1; // Đếm độ trễ
+                end
+            end
+            1: begin // Gửi bit
+                if (tx_counter < BAUD_COUNT - 1) begin
+                    tx_counter <= tx_counter + 1;
+                end
+                else begin
+                    tx_counter <= 0;
+                    tx <= tx_shift_reg[0]; // Gửi bit thấp nhất (LSB first)
+                    tx_shift_reg <= {1'b1, tx_shift_reg[9:1]}; // Dịch phải
+                    tx_bit_count <= tx_bit_count + 1;
+                    if (tx_bit_count == 9) begin // Đã gửi 10 bit
+                        tx_state <= 2;
+                    end
+                end
+            end
+            2: begin // Hoàn tất khung
+                tx_busy <= 0;
+                tx_state <= 0; // Quay lại chờ
+            end
+            default: tx_state <= 0;
+        endcase
+    end
+end
+
+// Logic nhận (RX)
+always @(posedge clk or negedge reset) begin
+    if (!reset) begin
+        rx_data <= 0;
+        rx_done <= 0;
+        rx_state <= 0;
+        rx_counter <= 0;
+        rx_bit_count <= 0;
+        rx_busy <= 0;
+        rx_shift_reg <= 0;
+    end
+    else begin
+        case (rx_state)
+            0: begin // Chờ start bit
+                rx_done <= 0;
+                if (rx == 0 && !rx_busy) begin // Phát hiện start bit
+                    rx_busy <= 1;
+                    rx_counter <= 0;
+                    rx_state <= 1;
+                end
+            end
+            1: begin // Chờ giữa start bit để xác nhận
+                if (rx_counter < BAUD_COUNT / 2 - 1) begin
+                    rx_counter <= rx_counter + 1;
+                end
+                else begin
+                    rx_counter <= 0;
+                    if (rx == 0) begin // Xác nhận start bit
+                        rx_state <= 2;
+                    end
+                    else begin
+                        rx_state <= 0; // Lỗi, quay lại chờ
+                        rx_busy <= 0;
+                    end
+                end
+            end
+            2: begin // Nhận 8 data bits
+                if (rx_counter < BAUD_COUNT - 1) begin
+                    rx_counter <= rx_counter + 1;
+                end
+                else begin
+                    rx_counter <= 0;
+                    rx_shift_reg <= {rx, rx_shift_reg[7:1]}; // Dịch phải, nạp bit mới
+                    rx_bit_count <= rx_bit_count + 1;
+                    if (rx_bit_count == 7) begin // Đã nhận 8 bit
+                        rx_state <= 3;
+                    end
+                end
+            end
+            3: begin // Nhận stop bit
+                if (rx_counter < BAUD_COUNT - 1) begin
+                    rx_counter <= rx_counter + 1;
+                end
+                else begin
+                    rx_counter <= 0;
+                    if (rx == 1) begin // Xác nhận stop bit
+                        rx_data <= rx_shift_reg; // Lưu dữ liệu
+                        rx_done <= 1; // Báo nhận hoàn tất
+                    end
+                    rx_busy <= 0;
+                    rx_state <= 0; // Quay lại chờ
+                end
+            end
+            default: rx_state <= 0;
+        endcase
+    end
+end
+
+endmodule

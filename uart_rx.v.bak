@@ -1,0 +1,91 @@
+module uart_rx(
+    input clk,         // xung 50MHz
+    input rst_n,       // reset active-low
+    input rx,          // đầu vào UART RX
+    output reg [7:0] data_out,  // dữ liệu nhận được
+    output reg valid          // báo hiệu dữ liệu hợp lệ
+);
+
+    parameter BAUD_DIV = 5208;   // BAUD_DIV = Fclk / Baud. Ví dụ 50 MHz / 9600 ≈ 5208.
+    
+    // Định nghĩa trạng thái của FSM
+    localparam IDLE  = 2'd0,
+               START = 2'd1,
+               DATA  = 2'd2,
+               STOP  = 2'd3;
+               
+    reg [1:0] state;
+    reg [12:0] counter;   // đủ bít để đếm tới BAUD_DIV
+    reg [3:0] bit_index;  // đếm 0 đến 7 cho 8 bit dữ liệu
+    reg [7:0] rx_shift;   // thanh dịch nhận dữ liệu
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state     <= IDLE;
+            counter   <= 0;
+            bit_index <= 0;
+            rx_shift  <= 0;
+            data_out  <= 0;
+            valid     <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    valid <= 0;
+                    counter <= 0;
+                    bit_index <= 0;
+                    if (rx == 1'b0) begin  // phát hiện start bit
+                        state <= START;
+                    end
+                    else state <= IDLE;
+                end
+
+                START: begin
+                    if (counter < (BAUD_DIV >> 1)) begin
+                        counter <= counter + 1;
+                    end else begin
+                        // Lấy mẫu giữa bit start
+                        if (rx == 1'b0) begin
+                            counter <= 0;
+                            state <= DATA;
+                        end else begin
+                            state <= IDLE;  // nếu không phải start bit thật
+                        end
+                    end
+                end
+
+                DATA: begin
+                    if (counter < BAUD_DIV - 1) begin
+                        counter <= counter + 1;
+                    end else begin
+                        counter <= 0;
+                        // Lấy mẫu bit dữ liệu, lấy LSB trước
+                        rx_shift[bit_index] <= rx;
+                        if (bit_index < 7)
+                            bit_index <= bit_index + 1;
+                        else begin
+                            bit_index <= 0;
+                            state <= STOP;
+                        end
+                    end
+                end
+
+                STOP: begin
+                    if (counter < BAUD_DIV - 1) begin
+                        counter <= counter + 1;
+                    end else begin
+                        counter <= 0;
+                        // Lấy mẫu bit stop, nếu nhận 1 (đúng định dạng UART)
+                        if (rx == 1'b1) begin
+                            data_out <= rx_shift;
+                            valid <= 1;
+                        end
+                        state <= IDLE;
+                    end
+                end
+
+                default: state <= IDLE;
+            endcase
+        end
+    end
+
+endmodule

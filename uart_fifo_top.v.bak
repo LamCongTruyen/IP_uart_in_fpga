@@ -1,0 +1,142 @@
+`timescale 1ns/1ps
+
+module uart_fifo_top #(
+    parameter DATA_WIDTH = 8,
+    parameter DEPTH      = 256,
+    parameter BUFFER_NUM = 2
+)(
+    input  wire clk,
+    input  wire rst_n,   // active low reset
+    input  wire rx,      // UART RX
+    output wire tx       // UART TX
+);
+
+    //--------------------------------------------------------
+    // Wires between UART RX and FIFO
+    //--------------------------------------------------------
+    wire [DATA_WIDTH-1:0] rx_data;
+    wire rx_valid;
+
+    //--------------------------------------------------------
+    // Wires between FIFO and UART TX
+    //--------------------------------------------------------
+    wire [DATA_WIDTH-1:0] tx_data;
+    reg  trigger;
+    wire tx_busy;
+
+    //--------------------------------------------------------
+    // RAM interface wires (for circular buffer)
+    //--------------------------------------------------------
+    wire ram_wr_en;
+    wire [DATA_WIDTH-1:0] ram_wr_data;
+    wire [clog2(DEPTH*BUFFER_NUM)-1:0] ram_wr_addr;
+
+    wire [DATA_WIDTH-1:0] ram_rd_data;
+    wire [clog2(DEPTH*BUFFER_NUM)-1:0] ram_rd_addr;
+
+    //--------------------------------------------------------
+    // Internal buffer RAM (simple dual port)
+    //--------------------------------------------------------
+    reg [DATA_WIDTH-1:0] ram [0:(DEPTH*BUFFER_NUM)-1];
+
+    always @(posedge clk) begin
+        if (ram_wr_en) begin
+            ram[ram_wr_addr] <= ram_wr_data;
+        end
+    end
+
+    assign ram_rd_data = ram[ram_rd_addr];
+
+    //--------------------------------------------------------
+    // UART RX Instance
+    //--------------------------------------------------------
+    uart_rx uart_rx_inst (
+        .clk     (clk),
+        .rst_n   (rst_n),
+        .rx      (rx),
+        .data_out(rx_data),
+        .valid   (rx_valid)
+    );
+
+    //--------------------------------------------------------
+    // Circular Buffer Controller Instance
+    //--------------------------------------------------------
+    circular_buffer_controller #(
+        .WRITE_DATA_WIDTH (DATA_WIDTH),
+        .WRITE_DATA_DEPTH (DEPTH),
+        .READ_DATA_WIDTH  (DATA_WIDTH),
+        .READ_DATA_DEPTH  (DEPTH),
+        .BUFFER_NUM       (BUFFER_NUM)
+    ) fifo_inst (
+        .wr_clk_i       (clk),
+        .rd_clk_i       (clk),
+        .rst_i          (~rst_n),   // active high reset
+
+        // Write side
+        .wr_req_i       (rx_valid),     // yêu cầu ghi khi có dữ liệu
+        .wr_req_ack_o   (),             // không dùng ở demo
+        .wr_req_result_o(),             // không dùng ở demo
+        .wr_finish_i    (1'b0),         // demo: không phân block
+        .wr_finish_ack_o(),
+        .wr_en_i        (rx_valid),
+        .wr_data_i      (rx_data),
+        .wr_addr_i      ({clog2(DEPTH){1'b0}}), // addr nội bộ quản lý
+
+        // Read side
+        .rd_req_i       (trigger),
+        .rd_req_ack_o   (), 
+        .rd_req_result_o(),
+        .rd_finish_i    (1'b0),
+        .rd_finish_ack_o(),
+        .rd_data_o      (tx_data),
+        .rd_addr_i      ({clog2(DEPTH){1'b0}}),
+
+        // RAM interface
+        .ram_wr_clk_o(),
+        .ram_rd_clk_o(),
+        .ram_rst_o(),
+        .ram_wr_en_o    (ram_wr_en),
+        .ram_wr_data_o  (ram_wr_data),
+        .ram_wr_addr_o  (ram_wr_addr),
+        .ram_rd_data_i  (ram_rd_data),
+        .ram_rd_addr_o  (ram_rd_addr)
+    );
+
+    //--------------------------------------------------------
+    // UART TX Instance
+    //--------------------------------------------------------
+    uart_tx uart_tx_inst (
+        .clk     (clk),
+        .rst_n   (rst_n),
+        .trigger (trigger),
+        .data_in (tx_data),
+        .tx      (tx),
+        .busy    (tx_busy)
+    );
+
+    //--------------------------------------------------------
+    // Simple trigger logic: lấy dữ liệu từ FIFO khi TX rảnh
+    //--------------------------------------------------------
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            trigger <= 1'b0;
+        else if (!tx_busy)
+            trigger <= 1'b1;  // xin đọc dữ liệu từ FIFO
+        else
+            trigger <= 1'b0;
+    end
+
+    //--------------------------------------------------------
+    // Function: clog2
+    //--------------------------------------------------------
+    function integer clog2;
+        input integer value;
+        integer i;
+        begin
+            clog2 = 0;
+            for (i = value-1; i > 0; i = i >> 1)
+                clog2 = clog2 + 1;
+        end
+    endfunction
+
+endmodule
